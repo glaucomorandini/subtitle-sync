@@ -1,0 +1,2 @@
+# No external dependencies — uses only Python stdlib
+# OpenRouter API is called via urllib.request
