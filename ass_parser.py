@@ -67,8 +67,8 @@ def get_style(rest_field):
 
 def get_text(rest_field):
     """Extract plain text from the rest field."""
-    parts = rest_field.split(',', 4)
-    return strip_tags(parts[4]) if len(parts) > 4 else ''
+    parts = rest_field.split(',', 6)
+    return strip_tags(parts[6]) if len(parts) > 6 else ''
 
 
 # ─── Style detection ─────────────────────────────────────────────────────────
@@ -96,18 +96,41 @@ def get_primary_speech_style(lines):
     return max(style_counts, key=style_counts.get)
 
 
-def get_speech_lines(lines, primary_style):
-    """Extract dialogue lines matching the primary speech style."""
+def get_all_speech_styles(lines):
+    """Return a set of all style names that are speech styles."""
+    styles = set()
+    for line in lines:
+        if not line.startswith('Dialogue:'):
+            continue
+        parsed = parse_line(line)
+        if not parsed:
+            continue
+        style = get_style(parsed['rest'])
+        parts = [p.strip() for p in style.lower().split('-')]
+        base = next((p for p in parts if p in SPEECH_BASES), None)
+        if base:
+            styles.add(style)
+    return styles
+
+
+def get_speech_lines(lines, styles):
+    """Extract dialogue lines matching any of the given speech styles.
+
+    styles can be a single style string or a set/list of style names.
+    """
+    if isinstance(styles, str):
+        styles = {styles}
     result = []
     for i, line in enumerate(lines):
         if not line.startswith('Dialogue:'):
             continue
         parsed = parse_line(line)
-        if parsed and get_style(parsed['rest']) == primary_style:
+        if parsed and get_style(parsed['rest']) in styles:
             result.append({
                 'idx': i,
                 'start_s': parsed['start_s'],
                 'end_s': parsed['end_s'],
                 'text': get_text(parsed['rest']),
             })
+    result.sort(key=lambda x: x['start_s'])
     return result

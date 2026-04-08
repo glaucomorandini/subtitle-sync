@@ -1,6 +1,7 @@
 """Time mapping: anchor building and piecewise-linear interpolation."""
 
 from bisect import bisect_right
+from statistics import median
 
 
 def build_anchors(matches, pt_lines, en_lines):
@@ -24,15 +25,61 @@ def build_anchors(matches, pt_lines, en_lines):
     return anchors
 
 
-def make_monotonic(anchors):
-    """Sort, deduplicate, and enforce monotonicity on anchor pairs."""
-    anchors = sorted(set(anchors))
+def filter_outlier_anchors(anchors, k=4, max_dev=8.0):
+    """Keep an anchor if at least one of its k nearest PT-time neighbors has
+    a similar offset (within max_dev seconds).
+
+    This handles two cases correctly:
+    - Isolated bad LLM matches: no neighbors agree → dropped.
+    - Real video cuts: a small *cluster* of anchors with a different offset
+      band still mutually support each other → all kept.
+
+    A simple median filter would incorrectly drop the cluster as outliers,
+    even though it represents the correct mapping across a scene cut.
+    """
+    if len(anchors) < k + 1:
+        return list(anchors)
+    sorted_a = sorted(anchors, key=lambda a: a[0])
+    offsets = [a[1] - a[0] for a in sorted_a]
+    n = len(sorted_a)
+    kept = []
+    for i in range(n):
+        my_off = offsets[i]
+        my_pt = sorted_a[i][0]
+        # k nearest neighbors by PT-time distance, expanding outward
+        l, r = i - 1, i + 1
+        neighbor_offs = []
+        while len(neighbor_offs) < k and (l >= 0 or r < n):
+            if l < 0:
+                neighbor_offs.append(offsets[r]); r += 1
+            elif r >= n:
+                neighbor_offs.append(offsets[l]); l -= 1
+            elif (my_pt - sorted_a[l][0]) <= (sorted_a[r][0] - my_pt):
+                neighbor_offs.append(offsets[l]); l -= 1
+            else:
+                neighbor_offs.append(offsets[r]); r += 1
+        if any(abs(my_off - no) <= max_dev for no in neighbor_offs):
+            kept.append(sorted_a[i])
+    return kept
+
+
+def make_monotonic(anchors, **_ignored):
+    """Sort by src (PT time) and dedup near-equal src timestamps.
+
+    Note: we deliberately do NOT enforce dst (EN time) to be non-decreasing.
+    When the two video edits reorder scenes, the correct mapping is genuinely
+    non-monotonic in EN time, and forcing monotonicity drops valid anchors.
+    Outlier filtering already removes bad LLM matches; what remains may
+    legitimately go backward in EN time across a scene reorder.
+    """
+    anchors = sorted(set(anchors), key=lambda a: a[0])
     if not anchors:
         return anchors
     result = [anchors[0]]
     for a in anchors[1:]:
-        if a[0] > result[-1][0] + 0.005 and a[1] >= result[-1][1]:
-            result.append(a)
+        if a[0] <= result[-1][0] + 0.005:
+            continue
+        result.append(a)
     return result
 
 
